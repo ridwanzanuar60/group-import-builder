@@ -559,7 +559,7 @@ body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', 
 
 <script>
 // ============ STATE ============
-let catalogue = [];        // [{code, name, cat, satuan}]
+let catalogue = [];        // [{code, name, cat, satuan, satuanList:[]}]
 let groups = [];           // [{id, code, name, open, children:[{code,name,qty,satuan}]}]
 let pendingItem = null;    // item yg lagi dipilih dari catalogue
 let catFilter = 'ALL';
@@ -598,13 +598,20 @@ function parseCatalogue(data, fname) {
   };
   catalogue = data
     .filter(r => get(r, 'Kode Barang', 'kode barang'))
-    .map(r => ({
-      code: get(r, 'Kode Barang', 'kode barang'),
-      name: get(r, 'Nama Barang', 'nama barang'),
-      cat: get(r, 'Kategori Barang', 'kategori barang') || 'Lainnya',
-      satuan: get(r, 'Satuan') || 'PCS',
-      jenis: get(r, 'Jenis Barang', 'jenis barang')
-    }));
+    .map(r => {
+      const s1 = get(r, 'Satuan'); const s2 = get(r, 'Satuan #2');
+      const s3 = get(r, 'Satuan #3'); const s4 = get(r, 'Satuan #4'); const s5 = get(r, 'Satuan #5');
+      const allSat = [s1,s2,s3,s4,s5].map(s => s.trim()).filter(Boolean);
+      const uniqSat = [...new Set(allSat)];
+      return {
+        code: get(r, 'Kode Barang', 'kode barang'),
+        name: get(r, 'Nama Barang', 'nama barang'),
+        cat: get(r, 'Kategori Barang', 'kategori barang') || 'Lainnya',
+        satuan: uniqSat[0] || 'PCS',
+        satuanList: uniqSat.length ? uniqSat : ['PCS'],
+        jenis: get(r, 'Jenis Barang', 'jenis barang')
+      };
+    });
 
   document.getElementById('flName').textContent = fname;
   document.getElementById('flCount').textContent = `${catalogue.length} item dimuat`;
@@ -683,7 +690,7 @@ function addManualItem() {
   const satuan = document.getElementById('m-satuan').value.trim() || 'PCS';
   if (!code || !name) { alert('Kode dan Nama wajib diisi.'); return; }
   if (catalogue.find(i => i.code === code)) { alert('Kode sudah ada di katalog.'); return; }
-  catalogue.push({ code, name, cat, satuan, jenis: '' });
+  catalogue.push({ code, name, cat, satuan, satuanList: [satuan], jenis: '' });
   document.getElementById('m-code').value = '';
   document.getElementById('m-name').value = '';
   document.getElementById('m-cat').value = '';
@@ -713,11 +720,14 @@ function onCatItemClick(code) {
     </button>
     <div style="font-size:11px; color:var(--muted); font-family:'IBM Plex Mono',monospace; margin:4px 0 2px;">— atau tambahkan sebagai Child ke grup yang sudah ada —</div>
     ${groups.map(g => `
-      <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;" onclick="addChildToGroup('${g.id}', pendingItem);document.getElementById('chooseModal').classList.remove('show');">
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);width:80px;text-align:left;">${esc(g.code)}</span>
-        ${esc(g.name)}
-        <span style="margin-left:auto;font-size:11px;color:var(--muted);">${g.children.length} child</span>
-      </button>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);width:76px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;">${esc(g.code)}</span>
+        <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(g.name)}">${esc(g.name)}</span>
+        <select id="sat-sel-${g.id}" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--surface);color:var(--text);flex-shrink:0;">
+          ${(pendingItem.satuanList||[pendingItem.satuan||'PCS']).map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+        <button class="btn btn-blue btn-xs" onclick="addChildToGroup('${g.id}',pendingItem,document.getElementById('sat-sel-${g.id}').value);document.getElementById('chooseModal').classList.remove('show');">+ Add</button>
+      </div>
     `).join('')}
   `;
   document.getElementById('chooseModal').classList.add('show');
@@ -736,10 +746,12 @@ function addGroupFromItem(item) {
   updateToolbar();
 }
 
-function addChildToGroup(gid, item) {
+function addChildToGroup(gid, item, chosenSatuan) {
   const g = groups.find(x => x.id === gid);
   if (!g) return;
-  g.children.push({ code: item.code, name: item.name, qty: 1, satuan: item.satuan || 'PCS' });
+  const satuan = chosenSatuan || item.satuan || 'PCS';
+  const satuanList = item.satuanList && item.satuanList.length ? item.satuanList : [satuan];
+  g.children.push({ code: item.code, name: item.name, qty: 1, satuan, satuanList });
   g.open = true;
   renderGroups();
   updateToolbar();
@@ -828,9 +840,13 @@ function renderGroups() {
                     onchange="updateChild('${g.id}',${ci},'qty',this.value)" />
                 </td>
                 <td class="td-satuan">
+                  ${(c.satuanList && c.satuanList.length > 1) ? `
+                  <select class="inline-input mono" style="width:82px;padding:3px 4px;"
+                    onchange="updateChild('${g.id}',${ci},'satuan',this.value)">
+                    ${c.satuanList.map(s=>`<option value="${s}" ${s===c.satuan?'selected':''}>${s}</option>`).join('')}
+                  </select>` : `
                   <input class="inline-input mono" value="${esc(c.satuan)}" placeholder="Satuan"
-                    style="width:70px;"
-                    onchange="updateChild('${g.id}',${ci},'satuan',this.value)" />
+                    style="width:70px;" onchange="updateChild('${g.id}',${ci},'satuan',this.value)" />`}
                 </td>
                 <td class="td-del">
                   <button class="row-del" onclick="deleteChild('${g.id}',${ci})">✕</button>
